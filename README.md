@@ -26,10 +26,12 @@ bitcask-go/
 ## Entry Format
 
 Each key-value entry is stored with the following format:
+```
 +-------+------------+---------+-----------+---------+-----------+
 |  CRC  | Timestamp | KeySize | ValueSize |   Key   |   Value   |
 +-------+------------+---------+-----------+---------+-----------+
 |  4B   |    8B     |   4B    |    4B     | KeySize | ValueSize|
+```
 
 
 ## Running Tests
