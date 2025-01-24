@@ -11,7 +11,7 @@ A Go implementation of the Bitcask key-value store based on the [Bitcask paper](
 - ✅ Basic Put operation
 
 ## Project Structure
-
+```
 bitcask-go/
 ├── cmd/
 │   └── bitcaskd/
@@ -21,6 +21,7 @@ bitcask-go/
 │       ├── bitcask.go  # Core implementation
 │       └── entry.go    # Data structures
 └── tests/
+```
 
 ## Entry Format
 
