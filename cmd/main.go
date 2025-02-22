@@ -1,12 +1,15 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
+
+	db "bitcask/internal"
 )
 
-type db struct {
-	conn *sql.Conn
+type Bitcask struct {
+	file     *db.BitcaskFile
+	indexing *db.Indexing
+	lock     *db.LockFile
 }
 
 func main() {
