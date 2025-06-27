@@ -1,71 +1,41 @@
-# Bitcask in Go: An Ongoing Implementation
+# Go-Cask: A Bitcask Implementation in Go
+Go-Cask is an educational project to build a high-performance key-value store in Go, based on the principles of the Bitcask paper. It features an append-only log structure for writes and a fast, in-memory index for reads.
 
-This repository contains an ongoing implementation of a Bitcask key-value store in Go, following the principles outlined in the original Bitcask paper.
+## Features Implemented:
+- Put(key, value): Persists a key-value pair to disk.
 
-## Current Status
+- Get(key): Retrieves a value by its key.
 
-This project is currently in active development. The core data structure and append-only writing functionality are being implemented.
+- Append-Only Persistence: All data is written to a single, append-only data file, ensuring high write throughput.
 
-**What's Implemented:**
-
-* **`BitcaskFile` Structure:** Defines the record format for data storage, including CRC checksum, timestamp, key and value sizes, and the key-value pair itself.
-* **`CRCChecksum()`:** Calculates and sets the CRC32 checksum for a record, ensuring data integrity.
-* **`CreateAppend()`:** Serializes a key-value pair into a byte slice, including metadata, for append-only writing to the data file.
-* **Basic Data Serialization:** The data is being serialized to a byte array.
-* **Basic Project Structure:** The project is structured with internal packages for database logic.
-
-**What's Missing:**
-
-* **File I/O:** Actual reading and writing to disk.
-* **Indexing:** Implementation of the in-memory key directory for fast lookups.
-* **Locking:** Mechanisms to prevent concurrent access conflicts.
-* **Merging:** Log compaction and merging of data files.
-* **Reading:** Functionality to retrieve values based on keys.
-* **Error Handling:** Robust error handling throughout the codebase.
-* **Testing:** Comprehensive unit and integration tests.
-* **Open File and Create DB functions:** The main.go file is only printing to the console.
+- In-Memory Keydir: All keys and the on-disk location of their values are stored in a hash map for extremely fast lookups.
 
 
-## Getting Started
+## Design
+Go-Cask follows the core design of Bitcask, separating data storage from the index.
 
-1.  **Clone the repository:**
+### On-Disk Format
+Each record written to the data file is a binary-encoded entry with the following structure:
 
-    ```bash
-    git clone [repository URL]
-    cd bitcask
-    ```
+| Field      | Size (bytes) | Description                               |
+| :--------- | :----------- | :---------------------------------------- |
+| **CRC** | 4            | 32-bit CRC checksum of the key and value  |
+| **Timestamp**| 4            | Unix timestamp of the write operation     |
+| **Key Size** | 4            | The size of the key in bytes              |
+| **Value Size**| 4            | The size of the value in bytes            |
+| **Key** | Variable     | The key data                              |
+| **Value** | Variable     | The value data                            |
 
-2.  **Run the application:**
 
-    ```bash
-    go run main.go
-    ```
+### In-Memory Index (Keydir)
+To provide fast reads, Go-Cask holds a map[string]IndexEntry in memory. This map, the "Keydir," acts as a pointer to the location of the latest value for every key on disk.
 
-    Currently, this only displays a menu of unimplemented options.
+An **IndexEntry** contains:
 
-## Current Code Snippets
+- filename: The data file where the value is stored.
 
-```go
-package db
+- offset: The byte offset pointing to the start of the value.
 
-import (
-        "encoding/binary"
-        "fmt"
-        "hash/crc32"
-        "time"
-)
+- size: The size of the value in bytes.
 
-// ... (BitcaskFile, LockFile, Indexing, Bitcask structs) ...
-
-func (b *BitcaskFile) CRCChecksum() error {
-        // ... (CRC calculation) ...
-}
-
-func (b *BitcaskFile) CreateAppend(k []byte, val []byte) []byte {
-        // ... (Serialization of record data) ...
-}
-
-func (b *BitcaskFile) Write(k []byte, val []byte) {
-        // ... (To be implemented) ...
-}
-
+This means a Get operation is just one fast hash map lookup followed by a single disk seek and read.
