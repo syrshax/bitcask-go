@@ -7,7 +7,7 @@ import (
 
 func main() {
 	fmt.Printf(" -- Implementation of Bitcask paper --\n\n")
-	db, _ := db.Open("database")
+	db, _ := db.Open("database", 1)
 	key := []byte("foo")
 	val := []byte("bar")
 	db.Put(key, val)
