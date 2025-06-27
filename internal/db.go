@@ -124,12 +124,19 @@ func Open(d string) (*Bitcask, error) {
 		return nil, fmt.Errorf("bitcask: failed to open data file %s: %w", fileDir, err)
 	}
 
-	return &Bitcask{
+	b := &Bitcask{
 		activeFile: file,
 		path:       fileDir,
 		Keydir:     map[string]IndexEntry{},
 		lock:       LockFile{},
-	}, nil
+	}
+
+	err = b.loadIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	return b, nil
 }
 
 func (b *Bitcask) Close() error {
@@ -147,5 +154,63 @@ func (b *BitcaskFile) CRCChecksum() error {
 		return err
 	}
 	b.crc = crc.Sum32()
+	return nil
+}
+
+func (b *Bitcask) loadIndex() error {
+	_, err := b.activeFile.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, HEADER_SIZE)
+
+	var idx int64 = 0
+	keyDirMap := map[string]IndexEntry{}
+
+	for {
+		_, err := io.ReadFull(b.activeFile, buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		crc := binary.LittleEndian.Uint32(buf[0:4])
+		ksz := binary.LittleEndian.Uint32(buf[8:12])
+		value_sz := binary.LittleEndian.Uint32(buf[12:16])
+
+		key := make([]byte, ksz)
+		if _, err := io.ReadFull(b.activeFile, key); err != nil {
+			return err
+		}
+
+		value := make([]byte, value_sz)
+		if _, err := io.ReadFull(b.activeFile, value); err != nil {
+			return err
+		}
+
+		checksum := crc32.NewIEEE()
+		checksum.Write(key)
+		checksum.Write(value)
+
+		if checksum.Sum32() != crc {
+			return errors.New("database corruption: checksum mismatch")
+		}
+
+		offset := idx + HEADER_SIZE + int64(ksz)
+
+		entry := IndexEntry{
+			filename: b.activeFile.Name(),
+			offset:   int64(offset),
+			size:     int64(value_sz),
+		}
+
+		idx = idx + HEADER_SIZE + int64(ksz) + int64(value_sz)
+		keyDirMap[string(key)] = entry
+	}
+
+	b.Keydir = keyDirMap
+
 	return nil
 }
