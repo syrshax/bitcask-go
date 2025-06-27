@@ -1,76 +1,34 @@
-package db
+package db_test
 
 import (
+	db "bitcask/internal"
 	"bytes"
-	"encoding/binary"
-	"hash/crc32"
 	"testing"
 )
 
-func TestCRCChecksum(t *testing.T) {
-	key := []byte("hello")
-	value := []byte("world")
-
-	expectedCRC := func() uint32 {
-		crc := crc32.NewIEEE()
-		crc.Write(key)
-		crc.Write(value)
-		return crc.Sum32()
-	}()
-
-	bf := BitcaskFile{
-		key:   key,
-		value: value,
-	}
-
-	err := bf.CRCChecksum()
+func TestPutAndGet(t *testing.T) {
+	tmpDir := t.TempDir()
+	bitcask, err := db.Open(tmpDir)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Failed to open: %v", err)
+	}
+	defer bitcask.Close()
+
+	key1 := []byte("Cat")
+	val1 := []byte("Black")
+
+	err = bitcask.Put(key1, val1)
+	if err != nil {
+		t.Fatalf("Failed to put value: %v")
 	}
 
-	if bf.crc != expectedCRC {
-		t.Errorf("CRC mismatch: got %x, expected %x", bf.crc, expectedCRC)
-	}
-}
-
-func TestBitcaskFile_CreateAppend(t *testing.T) {
-	key := []byte("testKey")
-	value := []byte("testValue")
-
-	bf := &BitcaskFile{}
-
-	result := bf.CreateAppend(key, value)
-
-	if len(result) == 0 {
-		t.Error("Append produced an empty result")
+	retrive, err := bitcask.Get(key1)
+	if err != nil {
+		t.Fatalf("Failed to get: %v", err)
 	}
 
-	expectedCRC := func() uint32 {
-		crc := crc32.NewIEEE()
-		crc.Write(key)
-		crc.Write(value)
-		return crc.Sum32()
-	}()
-
-	extractedCRC := binary.LittleEndian.Uint32(result[:4])
-
-	if extractedCRC != expectedCRC {
-		t.Errorf("CRC mismatch: got %d, expected %d", extractedCRC, expectedCRC)
-	}
-
-	if !bytes.Contains(result, key) {
-		t.Error("Key not found in appended data")
-	}
-	if !bytes.Contains(result, value) {
-		t.Error("Value not found in appended data")
-	}
-
-	if bf.ksz != int32(len(key)) {
-		t.Errorf("key size mismatch: got %d, expected %d", bf.ksz, len(key))
-	}
-
-	if bf.value_sz != int32(len(value)) {
-		t.Errorf("value size mismatch: got %d, expected %d", bf.value_sz, len(value))
+	if !bytes.Equal(val1, retrive) {
+		t.Errorf("Failed to retrieve values: %v, Expected: %v", val1, retrive)
 	}
 
 }

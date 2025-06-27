@@ -2,10 +2,18 @@ package db
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
+	"os"
+	"path/filepath"
 	"time"
 )
+
+const HEADER_SIZE int64 = 16
+
+var ErrKeyNotFound = errors.New("bitcask: key not found")
 
 type BitcaskFile struct {
 	crc      uint32
@@ -18,12 +26,114 @@ type BitcaskFile struct {
 
 type LockFile struct{}
 
-type Indexing struct{}
+type IndexEntry struct {
+	filename string
+	offset   int64
+	size     int64
+}
 
 type Bitcask struct {
-	file     BitcaskFile
-	indexing Indexing
-	lock     LockFile
+	activeFile *os.File
+	path       string
+	Keydir     map[string]IndexEntry
+	lock       LockFile
+}
+
+func NewBitcaskFile(k, val []byte) (*BitcaskFile, error) {
+	b := &BitcaskFile{}
+
+	b.ksz = int32(len(k))
+	b.value_sz = int32(len(val))
+	b.tstamp = int32(time.Now().UnixMilli())
+	b.key = k
+	b.value = val
+
+	if err := b.CRCChecksum(); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func (bf *BitcaskFile) Encode() []byte {
+	size := HEADER_SIZE + int64(bf.ksz) + int64(bf.value_sz)
+	buf := make([]byte, size)
+
+	binary.LittleEndian.PutUint32(buf[0:4], bf.crc)
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(bf.tstamp))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(bf.ksz))
+	binary.LittleEndian.PutUint32(buf[12:16], uint32(bf.value_sz))
+
+	copy(buf[16:], bf.key)
+	copy(buf[16+int64(bf.ksz):], bf.value)
+
+	return buf
+}
+
+func (b *Bitcask) Get(key []byte) ([]byte, error) {
+	entry, ok := b.Keydir[string(key)]
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+
+	value := make([]byte, entry.size)
+
+	_, err := b.activeFile.ReadAt(value, entry.offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
+}
+
+func (b *Bitcask) Put(key, value []byte) error {
+	writeOffset, err := b.activeFile.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("bitcask: failed to get write offset: %w", err)
+	}
+
+	bitcaskFile, err := NewBitcaskFile(key, value)
+	if err != nil {
+		return fmt.Errorf("bitcask: failed to get make the CRC: %w", err)
+	}
+	record := bitcaskFile.Encode()
+
+	_, err = b.activeFile.Write(record)
+	if err != nil {
+		return fmt.Errorf("bitcask: failed to write record: %w", err)
+	}
+
+	newIndexEntry := IndexEntry{
+		filename: b.activeFile.Name(),
+		offset:   writeOffset + HEADER_SIZE + int64(bitcaskFile.ksz),
+		size:     int64(bitcaskFile.value_sz),
+	}
+
+	b.Keydir[string(key)] = newIndexEntry
+	return nil
+}
+
+func Open(d string) (*Bitcask, error) {
+	err := os.MkdirAll(d, 0775)
+	if err != nil {
+		return nil, err
+	}
+
+	fileDir := filepath.Join(d, "0001.data")
+	file, err := os.OpenFile(fileDir, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("bitcask: failed to open data file %s: %w", fileDir, err)
+	}
+
+	return &Bitcask{
+		activeFile: file,
+		path:       fileDir,
+		Keydir:     map[string]IndexEntry{},
+		lock:       LockFile{},
+	}, nil
+}
+
+func (b *Bitcask) Close() error {
+	return b.activeFile.Close()
 }
 
 func (b *BitcaskFile) CRCChecksum() error {
@@ -38,45 +148,4 @@ func (b *BitcaskFile) CRCChecksum() error {
 	}
 	b.crc = crc.Sum32()
 	return nil
-}
-
-func (b *BitcaskFile) CreateAppend(k []byte, val []byte) []byte {
-	b.ksz = int32(len(k))
-	b.value_sz = int32(len(val))
-	b.tstamp = int32(time.Now().UnixMilli())
-	b.key = k
-	b.value = val
-	b.CRCChecksum()
-
-	buffer := make([]byte, 0)
-
-	crcBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(crcBytes, b.crc)
-	fmt.Println(crcBytes)
-
-	crcBytes[0] = byte(b.crc)
-	crcBytes[1] = byte(b.crc >> 8)
-	crcBytes[2] = byte(b.crc >> 16)
-	crcBytes[3] = byte(b.crc >> 24)
-	buffer = append(buffer, crcBytes...)
-
-	tstampBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(tstampBytes, uint32(b.tstamp))
-	buffer = append(buffer, tstampBytes...)
-
-	kszBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(kszBytes, uint32(b.ksz))
-	buffer = append(buffer, kszBytes...)
-
-	valueSzBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(valueSzBytes, uint32(b.value_sz))
-	buffer = append(buffer, valueSzBytes...)
-
-	buffer = append(buffer, b.key...)
-	buffer = append(buffer, b.value...)
-	fmt.Println(buffer)
-	return buffer
-}
-
-func (b *BitcaskFile) Write(k []byte, val []byte) {
 }
