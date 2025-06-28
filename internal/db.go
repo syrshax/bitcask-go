@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,22 +91,48 @@ func (b *Bitcask) Get(key []byte) ([]byte, error) {
 	return value, nil
 }
 
-func (b *Bitcask) Put(key, value []byte) error {
-	writeOffset, err := b.activeFile.Seek(0, io.SeekEnd)
+func (b *Bitcask) rotate() error {
+	err := b.activeFile.Sync()
 	if err != nil {
-		return fmt.Errorf("bitcask: failed to get write offset: %w", err)
+		return err
+	}
+	err = b.activeFile.Close()
+	if err != nil {
+		return err
 	}
 
-	fileSize := len(value) + int(writeOffset)
-	if int64(fileSize) > b.maxFileSize {
-		log.Println("Max File Exceded! Rotation Should Happen")
-	}
+	b.activeFileId++
+	newFile := filepath.Join(b.dir, fmt.Sprintf("%08d.data", b.activeFileId))
+	b.activeFile, err = os.OpenFile(newFile, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return err
 
+	}
+	return nil
+}
+
+func (b *Bitcask) Put(key, value []byte) error {
 	bitcaskFile, err := NewBitcaskFile(key, value)
 	if err != nil {
 		return fmt.Errorf("bitcask: failed to get make the CRC: %w", err)
 	}
 	record := bitcaskFile.Encode()
+
+	stat, err := b.activeFile.Stat()
+	if err != nil {
+		return fmt.Errorf("Failed to check for activeFile lenght: %w", err)
+	}
+
+	if stat.Size()+int64(len(record)) > b.maxFileSize {
+		if err := b.rotate(); err != nil {
+			return fmt.Errorf("Failed to rotate the file: %w", err)
+		}
+	}
+
+	writeOffset, err := b.activeFile.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("bitcask: failed to get write offset: %w", err)
+	}
 
 	_, err = b.activeFile.Write(record)
 	if err != nil {
@@ -115,6 +140,8 @@ func (b *Bitcask) Put(key, value []byte) error {
 	}
 
 	offset := writeOffset + HEADER_SIZE + int64(bitcaskFile.ksz)
+
+	//Here we update the offset that tells exactly where the value starts!
 	newIndexEntry := IndexEntry{
 		filename: b.activeFile.Name(),
 		offset:   offset,
