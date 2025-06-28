@@ -8,10 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
 const HEADER_SIZE int64 = 16
+const MAX_FILE_SIZE int64 = 4096
 
 var ErrKeyNotFound = errors.New("bitcask: key not found")
 
@@ -33,10 +37,12 @@ type IndexEntry struct {
 }
 
 type Bitcask struct {
-	activeFile *os.File
-	path       string
-	Keydir     map[string]IndexEntry
-	lock       LockFile
+	Keydir       map[string]IndexEntry
+	activeFile   *os.File
+	activeFileId int
+	dir          string
+	lock         LockFile
+	maxFileSize  int64
 }
 
 func NewBitcaskFile(k, val []byte) (*BitcaskFile, error) {
@@ -85,26 +91,60 @@ func (b *Bitcask) Get(key []byte) ([]byte, error) {
 	return value, nil
 }
 
-func (b *Bitcask) Put(key, value []byte) error {
-	writeOffset, err := b.activeFile.Seek(0, io.SeekEnd)
+func (b *Bitcask) rotate() error {
+	err := b.activeFile.Sync()
 	if err != nil {
-		return fmt.Errorf("bitcask: failed to get write offset: %w", err)
+		return err
+	}
+	err = b.activeFile.Close()
+	if err != nil {
+		return err
 	}
 
+	b.activeFileId++
+	newFile := filepath.Join(b.dir, fmt.Sprintf("%08d.data", b.activeFileId))
+	b.activeFile, err = os.OpenFile(newFile, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return err
+
+	}
+	return nil
+}
+
+func (b *Bitcask) Put(key, value []byte) error {
 	bitcaskFile, err := NewBitcaskFile(key, value)
 	if err != nil {
 		return fmt.Errorf("bitcask: failed to get make the CRC: %w", err)
 	}
 	record := bitcaskFile.Encode()
 
+	stat, err := b.activeFile.Stat()
+	if err != nil {
+		return fmt.Errorf("Failed to check for activeFile lenght: %w", err)
+	}
+
+	if stat.Size()+int64(len(record)) > b.maxFileSize {
+		if err := b.rotate(); err != nil {
+			return fmt.Errorf("Failed to rotate the file: %w", err)
+		}
+	}
+
+	writeOffset, err := b.activeFile.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("bitcask: failed to get write offset: %w", err)
+	}
+
 	_, err = b.activeFile.Write(record)
 	if err != nil {
 		return fmt.Errorf("bitcask: failed to write record: %w", err)
 	}
 
+	offset := writeOffset + HEADER_SIZE + int64(bitcaskFile.ksz)
+
+	//Here we update the offset that tells exactly where the value starts!
 	newIndexEntry := IndexEntry{
 		filename: b.activeFile.Name(),
-		offset:   writeOffset + HEADER_SIZE + int64(bitcaskFile.ksz),
+		offset:   offset,
 		size:     int64(bitcaskFile.value_sz),
 	}
 
@@ -112,23 +152,45 @@ func (b *Bitcask) Put(key, value []byte) error {
 	return nil
 }
 
-func Open(d string) (*Bitcask, error) {
+func Open(d string, maxFileSize int64) (*Bitcask, error) {
 	err := os.MkdirAll(d, 0775)
 	if err != nil {
 		return nil, err
 	}
 
-	fileDir := filepath.Join(d, "0001.data")
+	dirItems, err := os.ReadDir(d)
+	if err != nil {
+		return nil, err
+	}
+
+	maxId := 1
+	for _, d := range dirItems {
+		if strings.HasSuffix(d.Name(), ".data") {
+			idStr := strings.TrimSuffix(d.Name(), ".data")
+			id, err := strconv.Atoi(idStr)
+			if err != nil {
+				continue
+			}
+			if id > maxId {
+				maxId = id
+			}
+		}
+	}
+
+	fileName := fmt.Sprintf("%08d.data", maxId)
+	fileDir := filepath.Join(d, fileName)
 	file, err := os.OpenFile(fileDir, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("bitcask: failed to open data file %s: %w", fileDir, err)
 	}
 
 	b := &Bitcask{
-		activeFile: file,
-		path:       fileDir,
-		Keydir:     map[string]IndexEntry{},
-		lock:       LockFile{},
+		activeFile:   file,
+		activeFileId: maxId,
+		maxFileSize:  maxFileSize,
+		dir:          d,
+		Keydir:       map[string]IndexEntry{},
+		lock:         LockFile{},
 	}
 
 	err = b.loadIndex()
@@ -158,59 +220,77 @@ func (b *BitcaskFile) CRCChecksum() error {
 }
 
 func (b *Bitcask) loadIndex() error {
-	_, err := b.activeFile.Seek(0, io.SeekStart)
+	keyDirMap := make(map[string]IndexEntry)
+
+	dirEntries, err := os.ReadDir(b.dir)
 	if err != nil {
 		return err
 	}
-	buf := make([]byte, HEADER_SIZE)
 
-	var idx int64 = 0
-	keyDirMap := map[string]IndexEntry{}
-
-	for {
-		_, err := io.ReadFull(b.activeFile, buf)
-		if err == io.EOF {
-			break
+	var dataFilePaths []string
+	for _, entry := range dirEntries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".data") {
+			dataFilePaths = append(dataFilePaths, entry.Name())
 		}
+	}
+
+	sort.Slice(dataFilePaths, func(i, j int) bool {
+		idA, _ := strconv.Atoi(strings.TrimSuffix(dataFilePaths[i], ".data"))
+		idB, _ := strconv.Atoi(strings.TrimSuffix(dataFilePaths[j], ".data"))
+		return idA < idB
+	})
+
+	for _, fileName := range dataFilePaths {
+		filePath := filepath.Join(b.dir, fileName)
+
+		file, err := os.Open(filePath)
 		if err != nil {
 			return err
 		}
+		defer file.Close()
 
-		crc := binary.LittleEndian.Uint32(buf[0:4])
-		ksz := binary.LittleEndian.Uint32(buf[8:12])
-		value_sz := binary.LittleEndian.Uint32(buf[12:16])
+		var offset int64 = 0
+		for {
+			headerBuf := make([]byte, HEADER_SIZE)
+			_, err := io.ReadFull(file, headerBuf)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
 
-		key := make([]byte, ksz)
-		if _, err := io.ReadFull(b.activeFile, key); err != nil {
-			return err
+			crc := binary.LittleEndian.Uint32(headerBuf[0:4])
+			ksz := binary.LittleEndian.Uint32(headerBuf[8:12])
+			vsz := binary.LittleEndian.Uint32(headerBuf[12:16])
+
+			key := make([]byte, ksz)
+			if _, err := io.ReadFull(file, key); err != nil {
+				return err
+			}
+			value := make([]byte, vsz)
+			if _, err := io.ReadFull(file, value); err != nil {
+				return err
+			}
+
+			checksum := crc32.NewIEEE()
+			checksum.Write(key)
+			checksum.Write(value)
+			if checksum.Sum32() != crc {
+				return errors.New("database corruption: checksum mismatch in file " + fileName)
+			}
+
+			entry := IndexEntry{
+				filename: fileName,
+				offset:   offset + HEADER_SIZE + int64(ksz),
+				size:     int64(vsz),
+			}
+			keyDirMap[string(key)] = entry
+
+			offset += HEADER_SIZE + int64(ksz) + int64(vsz)
 		}
-
-		value := make([]byte, value_sz)
-		if _, err := io.ReadFull(b.activeFile, value); err != nil {
-			return err
-		}
-
-		checksum := crc32.NewIEEE()
-		checksum.Write(key)
-		checksum.Write(value)
-
-		if checksum.Sum32() != crc {
-			return errors.New("database corruption: checksum mismatch")
-		}
-
-		offset := idx + HEADER_SIZE + int64(ksz)
-
-		entry := IndexEntry{
-			filename: b.activeFile.Name(),
-			offset:   int64(offset),
-			size:     int64(value_sz),
-		}
-
-		idx = idx + HEADER_SIZE + int64(ksz) + int64(value_sz)
-		keyDirMap[string(key)] = entry
 	}
 
 	b.Keydir = keyDirMap
-
 	return nil
 }

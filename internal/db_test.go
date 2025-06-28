@@ -8,7 +8,7 @@ import (
 
 func TestPutAndGet(t *testing.T) {
 	tmpDir := t.TempDir()
-	bitcask, err := db.Open(tmpDir)
+	bitcask, err := db.Open(tmpDir, 1000)
 	if err != nil {
 		t.Fatalf("Failed to open: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestPutAndGet(t *testing.T) {
 
 func TestReopenDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
-	bdb, err := db.Open(tmpDir)
+	bdb, err := db.Open(tmpDir, 1000)
 	if err != nil {
 		t.Fatalf("Failed to open: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestReopenDatabase(t *testing.T) {
 
 	bdb.Close()
 
-	bdb, err = db.Open(tmpDir)
+	bdb, err = db.Open(tmpDir, 1000)
 	if err != nil {
 		t.Fatal("error on opening")
 	}
