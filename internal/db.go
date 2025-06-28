@@ -81,9 +81,20 @@ func (b *Bitcask) Get(key []byte) ([]byte, error) {
 		return nil, ErrKeyNotFound
 	}
 
+	var fileToRead *os.File
+	if entry.filename == b.activeFile.Name() {
+		fileToRead = b.activeFile
+	} else {
+		filePath := filepath.Join(b.dir, entry.filename)
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		fileToRead = file
+	}
 	value := make([]byte, entry.size)
-
-	_, err := b.activeFile.ReadAt(value, entry.offset)
+	_, err := fileToRead.ReadAt(value, entry.offset)
 	if err != nil {
 		return nil, err
 	}
