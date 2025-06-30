@@ -38,7 +38,7 @@ func main() {
 		if err := database.Put(key, value); err != nil {
 			log.Fatalf("Error: Failed to save data: %v", err)
 		}
-		fmt.Println("OK")
+		fmt.Printf("OK\n Key:%s\tVal:%s\n", key, value)
 
 	case "--get":
 		if len(os.Args) != 3 {
