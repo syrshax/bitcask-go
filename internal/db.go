@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,8 +29,6 @@ type BitcaskFile struct {
 	value    []byte
 }
 
-type LockFile struct{}
-
 type IndexEntry struct {
 	filename string
 	offset   int64
@@ -41,7 +40,7 @@ type Bitcask struct {
 	activeFile   *os.File
 	activeFileId int
 	dir          string
-	lock         LockFile
+	mu           sync.RWMutex
 	maxFileSize  int64
 }
 
@@ -76,6 +75,9 @@ func (bf *BitcaskFile) Encode() []byte {
 }
 
 func (b *Bitcask) Get(key []byte) ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	entry, ok := b.Keydir[string(key)]
 	if !ok {
 		return nil, ErrKeyNotFound
@@ -103,6 +105,9 @@ func (b *Bitcask) Get(key []byte) ([]byte, error) {
 }
 
 func (b *Bitcask) rotate() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	err := b.activeFile.Sync()
 	if err != nil {
 		return err
@@ -123,6 +128,9 @@ func (b *Bitcask) rotate() error {
 }
 
 func (b *Bitcask) Put(key, value []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	bitcaskFile, err := NewBitcaskFile(key, value)
 	if err != nil {
 		return fmt.Errorf("bitcask: failed to get make the CRC: %w", err)
@@ -201,7 +209,7 @@ func Open(d string, maxFileSize int64) (*Bitcask, error) {
 		maxFileSize:  maxFileSize,
 		dir:          d,
 		Keydir:       map[string]IndexEntry{},
-		lock:         LockFile{},
+		mu:           sync.RWMutex{},
 	}
 
 	err = b.loadIndex()
