@@ -105,9 +105,6 @@ func (b *Bitcask) Get(key []byte) ([]byte, error) {
 }
 
 func (b *Bitcask) rotate() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	err := b.activeFile.Sync()
 	if err != nil {
 		return err
