@@ -10,7 +10,7 @@ import (
 
 const dbPath = "./cask-data"
 
-const maxFileSize = 8 * 1024 // 8 Kilobytes
+const maxFileSize = 16 * 1024 // 8 Kilobytes
 
 func main() {
 	database, err := db.Open(dbPath, maxFileSize)
