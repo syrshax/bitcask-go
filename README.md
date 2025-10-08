@@ -39,3 +39,50 @@ An **IndexEntry** contains:
 - size: The size of the value in bytes.
 
 This means a Get operation is just one fast hash map lookup followed by a single disk seek and read.
+
+## Build
+
+To build the executable, ensure you have **Go (version 1.18 or higher)** installed.
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repo-url>
+    cd go-cask
+    ```
+2.  **Build the executable:**
+    Use the `go build` command in the root directory. This will create a runnable binary named `go-cask` (or `go-cask.exe` on Windows).
+    ```bash
+    go build -o go-cask
+    ```
+---
+
+## Usage
+Once the executable is built, you can interact with the key-value store using the following commands. The data directory is created at `./cask-data` by default.
+
+### Storing Data (`--put`)
+
+Use the `--put` command followed by the `<key>` and `<value>` you want to store.
+
+```bash
+# Syntax: ./go-cask --put <key> <value>
+$ ./go-cask --put username alice
+OK
+ Key:username  Val:alice
+
+$ ./go-cask --put city "San Francisco"
+OK
+ Key:city  Val:San Francisco
+```
+
+### Getting Data (`--get`)
+Use the `--get`command followed by the `<key>` to retrieve the stored value.
+
+```bash
+# Syntax: ./go-cask --get <key>
+$ ./go-cask --get username
+alice
+
+# If the key is not found:
+$ ./go-cask --get age
+Error: Key not found: age
+```
