@@ -44,9 +44,9 @@ This means a Get operation is just one fast hash map lookup followed by a single
 
 To build the executable, ensure you have **Go (version 1.18 or higher)** installed.
 
-    ```bash
-    go build -o go-cask
-    ```
+```bash
+go build -o go-cask
+```
 ---
 
 ## Usage
