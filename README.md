@@ -44,8 +44,6 @@ This means a Get operation is just one fast hash map lookup followed by a single
 
 To build the executable, ensure you have **Go (version 1.18 or higher)** installed.
 
- **Build the executable:**
-    Use the `go build` command in the root directory. This will create a runnable binary named `go-cask` (or `go-cask.exe` on Windows).
     ```bash
     go build -o go-cask
     ```
